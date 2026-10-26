@@ -21,9 +21,12 @@ import services.resources.editor_state as editor_state
 
 logger = logging.getLogger(__name__)
 
-# Blocking reasons that indicate Unity is actually busy (not just stale status).
-# Must match activityPhase values from EditorStateCache.cs
-_REAL_BLOCKING_REASONS = {"compiling", "domain_reload", "running_tests", "asset_import"}
+# Blocking reasons that mean Unity is actually busy, as opposed to "stale_status", which only
+# says the snapshot is over 2 s old (normal for an unfocused editor; compile and reload state are
+# set by events, so a stale snapshot still shows them). Must match the reasons
+# services/resources/editor_state.py emits: it says "asset_refresh", and the set used to list
+# "asset_import" (EditorStateCache's activity phase), so a refresh in progress passed as ready.
+_REAL_BLOCKING_REASONS = {"compiling", "domain_reload", "running_tests", "asset_refresh"}
 
 
 def _in_pytest() -> bool:
