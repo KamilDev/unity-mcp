@@ -269,3 +269,14 @@ async def test_read_path_propagates_transport_failure(monkeypatch):
     assert data["success"] is False
     assert data["hint"] == "retry"
     assert "session not available" in data["error"]
+
+
+def test_answer_dialog_is_listed_without_a_unity_registration():
+    """answer_dialog is answered on the transport thread, not registered as a Unity tool, so Unity's
+    register_tools never names it. Following its own (absent) Unity state, the HTTP tool listing hid it
+    from every client although calls worked. It is server-only for visibility, like set_active_instance."""
+    import services.tools.answer_dialog  # noqa: F401  (registers the tool)
+    from services.registry import get_registered_tools
+
+    info = next(t for t in get_registered_tools() if t["name"] == "answer_dialog")
+    assert info["unity_target"] is None

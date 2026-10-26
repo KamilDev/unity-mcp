@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 
 
 @mcp_for_unity_tool(
+    # Answered on the transport thread (like ping), not through Unity's tool registry, so Unity's
+    # register_tools never names it. Left to follow its own Unity state, the HTTP tool listing
+    # hid it from every client while calls still worked.
+    unity_target=None,
     description=(
         "Reads or answers a modal dialog blocking the Unity Editor. A modal blocks every other "
         "tool until answered. Omit button to read the dialog; pass button to press it."
