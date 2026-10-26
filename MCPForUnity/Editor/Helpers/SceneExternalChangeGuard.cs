@@ -116,8 +116,12 @@ namespace MCPForUnity.Editor.Helpers
                         // this guard exists to prevent. Scenes saved before this one keep their new
                         // baselines (sceneSaved records them); this one and any after stay unresolved.
                         outcome.Blocked = true;
+                        // reload is refused while several scenes are open (it would unload or reorder
+                        // them), so only offer it when it can actually run.
                         outcome.Error = $"Could not save {path} to keep the Editor's version (is the file read-only or locked?). "
-                                        + "Make it writable and retry, or set on_external_scene_change to \"reload\".";
+                                        + (openScenes.Count > 1
+                                            ? "Make it writable and retry, or close the other open scenes and set on_external_scene_change to \"reload\"."
+                                            : "Make it writable and retry, or set on_external_scene_change to \"reload\".");
                         return outcome;
                     }
                     outcome.OverwrittenScenes.Add(path);

@@ -91,6 +91,8 @@ namespace MCPForUnityTests.Editor.Helpers
 
                 Assert.IsTrue(outcome.Blocked, "a failed save must block the refresh");
                 StringAssert.Contains(path, outcome.Error);
+                // Two scenes are open, where reload is refused: the advice must say to close the others first.
+                StringAssert.Contains("close the other open scenes", outcome.Error);
                 CollectionAssert.IsEmpty(outcome.OverwrittenScenes, "nothing was overwritten");
                 Assert.AreEqual(edited, File.GetLastWriteTimeUtc(path), "the scene file must be untouched");
 
