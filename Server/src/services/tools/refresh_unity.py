@@ -166,7 +166,11 @@ async def verify_edit_by_sha(
 
 
 @mcp_for_unity_tool(
-    description="Request a Unity asset database refresh and optionally a script compilation. Can optionally wait for readiness.",
+    description=(
+        "Request a Unity asset database refresh and optionally a script compilation. With wait_for_ready "
+        "(the default) it returns only once the editor is ready again, compilation and domain reload "
+        "included, so the next call can follow it directly."
+    ),
     annotations=ToolAnnotations(
         title="Refresh Unity",
         destructiveHint=True,
@@ -180,7 +184,8 @@ async def refresh_unity(
     compile: Annotated[Literal["none", "request"],
                        "Whether to request compilation"] = "none",
     wait_for_ready: Annotated[bool,
-                              "If true, wait until mcpforunity://editor/state reports data.advice.ready_for_tools true"] = True,
+                              "If true, return only once mcpforunity://editor/state reports data.advice.ready_for_tools true "
+                              "(after any compilation and domain reload); false returns at once"] = True,
 ) -> MCPResponse | dict[str, Any]:
     unity_instance = await get_unity_instance_from_context(ctx)
 
@@ -243,8 +248,9 @@ async def refresh_unity(
     # Optional server-side wait loop (defensive): if Unity tool doesn't wait or returns quickly,
     # poll the canonical editor_state resource until ready or timeout.
     ready_confirmed = False
+    waited_s = 0.0
     if wait_for_ready:
-        ready_confirmed, _ = await wait_for_editor_ready(ctx, timeout_s=60.0)
+        ready_confirmed, waited_s = await wait_for_editor_ready(ctx, timeout_s=60.0)
 
         # If we timed out without confirming readiness, log and return failure
         if not ready_confirmed:
@@ -270,4 +276,33 @@ async def refresh_unity(
             data={"recovered_from_disconnect": True},
         )
 
+    if ready_confirmed:
+        return MCPResponse(**_report_ready(response_dict, waited_s))
+
     return MCPResponse(**response_dict) if isinstance(response, dict) else response
+
+
+def _report_ready(response_dict: dict[str, Any], waited_s: float) -> dict[str, Any]:
+    """Describe the editor as the wait above left it, not as Unity saw it when it replied.
+
+    With a compile requested, Unity replies the moment compilation starts (so the reply
+    is on the wire before the domain reload), which makes its resulting_state "compiling"
+    and its hint "poll editor_state until ready". By the time this returns the server has
+    already done that poll, so passing them on told agents the opposite of what happened:
+    they treated a finished refresh as still compiling and slept or polled on top of it.
+    Unity's own snapshot is kept as unity_state_at_reply.
+    """
+    out = dict(response_dict)
+    data = dict(out.get("data") or {})
+    if "resulting_state" in data:
+        data["unity_state_at_reply"] = data["resulting_state"]
+    data["resulting_state"] = "idle"
+    data["ready_confirmed"] = True
+    data["waited_seconds"] = round(waited_s, 1)
+    data["hint"] = (
+        "Refresh finished and the editor is ready: any requested compilation and domain "
+        "reload are done. No need to poll mcpforunity://editor/state or wait before the next call."
+    )
+    out["data"] = data
+    out["message"] = "Refresh complete; editor is ready."
+    return out
