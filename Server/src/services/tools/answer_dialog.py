@@ -55,6 +55,20 @@ async def answer_dialog(
         data = response.get("data") if isinstance(response, dict) else None
         modal = (data or {}).get("modal") if isinstance(data, dict) else None
 
+        # Dialog detection is Windows-only. Where it isn't supported, "not blocked" only means the
+        # probe can't see one, so say that instead of a confident all-clear.
+        if isinstance(modal, dict) and modal.get("supported") is False and not modal.get("blocked"):
+            return MCPResponse(
+                success=True,
+                message=("Dialog detection isn't available on this platform (Windows only), so a "
+                         "modal dialog may still be open. A long main_thread_stall_ms suggests one."),
+                data={
+                    "blocked": None,
+                    "supported": False,
+                    "main_thread_stall_ms": (data or {}).get("main_thread_stall_ms"),
+                },
+            )
+
         if not isinstance(modal, dict) or not modal.get("blocked"):
             return MCPResponse(
                 success=True,

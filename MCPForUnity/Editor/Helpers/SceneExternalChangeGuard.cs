@@ -50,6 +50,18 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         /// <summary>
+        /// Normalizes an <c>on_external_scene_change</c> value: blank means <see cref="ModeAuto"/>,
+        /// anything else must be one of the three modes. Returns false for an unknown value, which
+        /// must be rejected: <see cref="Reconcile"/> would otherwise treat it like
+        /// <see cref="ModeReload"/> and replace the open scene with the disk version.
+        /// </summary>
+        internal static bool TryNormalizeMode(string mode, out string normalized)
+        {
+            normalized = string.IsNullOrWhiteSpace(mode) ? ModeAuto : mode.Trim().ToLowerInvariant();
+            return normalized == ModeAuto || normalized == ModeReload || normalized == ModeKeepEditor;
+        }
+
+        /// <summary>
         /// Reconcile any open scene whose file changed on disk since we last recorded it.
         /// Returns an outcome whose <see cref="Outcome.Blocked"/> flag means the caller must not
         /// refresh: doing so would raise the modal prompt.
@@ -57,7 +69,11 @@ namespace MCPForUnity.Editor.Helpers
         internal static Outcome Reconcile(string mode)
         {
             var outcome = new Outcome();
-            mode = string.IsNullOrWhiteSpace(mode) ? ModeAuto : mode.Trim().ToLowerInvariant();
+            if (!TryNormalizeMode(mode, out mode))
+            {
+                throw new ArgumentException(
+                    $"Unknown on_external_scene_change '{mode}'; expected {ModeAuto}, {ModeReload} or {ModeKeepEditor}.");
+            }
 
             var baseline = LoadBaseline();
             var openScenes = OpenScenes();
@@ -130,15 +146,6 @@ namespace MCPForUnity.Editor.Helpers
 
             RecordBaseline(OpenScenes());
             return outcome;
-        }
-
-        /// <summary>
-        /// Record the current on-disk timestamps as the known-good baseline. Called after any
-        /// operation that syncs Unity with disk, so the next check only sees genuinely new edits.
-        /// </summary>
-        internal static void RecordBaseline()
-        {
-            RecordBaseline(OpenScenes());
         }
 
         private static string BuildBlockedMessage(List<Scene> changed, bool anyDirty, bool multiScene)

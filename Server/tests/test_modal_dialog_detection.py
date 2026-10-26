@@ -280,3 +280,43 @@ def test_answer_dialog_is_listed_without_a_unity_registration():
 
     info = next(t for t in get_registered_tools() if t["name"] == "answer_dialog")
     assert info["unity_target"] is None
+
+
+@pytest.mark.asyncio
+async def test_read_path_on_unsupported_platform_is_not_an_all_clear(monkeypatch):
+    """Dialog detection is Windows-only. Where it's unsupported, 'not blocked' only means the probe
+    can't see a dialog, so the read must say detection is unavailable, not that none is open."""
+    from services.tools import answer_dialog as mod
+
+    async def fake_send(send_fn, unity_instance, command, params, **kwargs):
+        return {"success": True, "data": _liveness(blocked=False, stall_ms=7000, supported=False)}
+
+    monkeypatch.setattr(mod.unity_transport, "send_with_unity_instance", fake_send)
+    monkeypatch.setattr(mod, "get_unity_instance_from_context", _async_none)
+
+    resp = await mod.answer_dialog(_Ctx())
+    data = resp.model_dump() if hasattr(resp, "model_dump") else resp
+
+    assert data["success"] is True
+    assert "No modal dialog is currently open" not in data["message"]
+    assert "isn't available" in data["message"]
+    assert data["data"]["supported"] is False
+    assert data["data"]["blocked"] is None
+    assert data["data"]["main_thread_stall_ms"] == 7000
+
+
+@pytest.mark.asyncio
+async def test_read_path_on_supported_platform_keeps_the_all_clear(monkeypatch):
+    from services.tools import answer_dialog as mod
+
+    async def fake_send(send_fn, unity_instance, command, params, **kwargs):
+        return {"success": True, "data": _liveness(blocked=False, supported=True)}
+
+    monkeypatch.setattr(mod.unity_transport, "send_with_unity_instance", fake_send)
+    monkeypatch.setattr(mod, "get_unity_instance_from_context", _async_none)
+
+    resp = await mod.answer_dialog(_Ctx())
+    data = resp.model_dump() if hasattr(resp, "model_dump") else resp
+
+    assert data["message"] == "No modal dialog is currently open in the Unity Editor."
+    assert data["data"] == {"blocked": False}
