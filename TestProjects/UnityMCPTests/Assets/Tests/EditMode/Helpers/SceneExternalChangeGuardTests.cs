@@ -73,6 +73,43 @@ namespace MCPForUnityTests.Editor.Helpers
         }
 
         [Test]
+        public void Reconcile_KeepEditor_FailedSave_BlocksAndLeavesTheChangeUnresolved()
+        {
+            // A failed save (read-only or locked file) leaves the disk copy different. Reporting it as
+            // overwritten and refreshing anyway would raise the prompt the guard exists to prevent.
+            string path = $"Assets/McpGuardTest_{Guid.NewGuid():N}.unity";
+            Scene scratch = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            var realSave = SceneExternalChangeGuard.SaveScene;
+            try
+            {
+                Assert.IsTrue(EditorSceneManager.SaveScene(scratch, path), "sanity: scratch scene saved");
+                var edited = File.GetLastWriteTimeUtc(path).AddMinutes(1);
+                File.SetLastWriteTimeUtc(path, edited);
+                SceneExternalChangeGuard.SaveScene = _ => false;
+
+                var outcome = SceneExternalChangeGuard.Reconcile(SceneExternalChangeGuard.ModeKeepEditor);
+
+                Assert.IsTrue(outcome.Blocked, "a failed save must block the refresh");
+                StringAssert.Contains(path, outcome.Error);
+                CollectionAssert.IsEmpty(outcome.OverwrittenScenes, "nothing was overwritten");
+                Assert.AreEqual(edited, File.GetLastWriteTimeUtc(path), "the scene file must be untouched");
+
+                // The baseline must not have advanced past the unresolved edit: the next check still sees it.
+                var again = SceneExternalChangeGuard.Reconcile(SceneExternalChangeGuard.ModeKeepEditor);
+                Assert.IsTrue(again.Blocked, "the unresolved change must still be detected");
+            }
+            finally
+            {
+                SceneExternalChangeGuard.SaveScene = realSave;
+                if (scratch.IsValid())
+                {
+                    EditorSceneManager.CloseScene(scratch, removeScene: true);
+                }
+                AssetDatabase.DeleteAsset(path);
+            }
+        }
+
+        [Test]
         public void HandleCommand_ScriptsScope_LeavesAChangedSceneAlone()
         {
             // Two scenes open plus an external edit is what makes "auto" block. A script-only request

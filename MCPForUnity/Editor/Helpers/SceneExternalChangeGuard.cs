@@ -28,6 +28,9 @@ namespace MCPForUnity.Editor.Helpers
 
         private const string BaselineKey = "MCPForUnity.OpenSceneMtimeBaseline";
 
+        /// <summary>The save <see cref="ModeKeepEditor"/> uses; replaceable so tests can make it fail.</summary>
+        internal static Func<Scene, bool> SaveScene = scene => EditorSceneManager.SaveScene(scene);
+
         static SceneExternalChangeGuard()
         {
             // Without a baseline from scene-open time the first refresh of a session has nothing to
@@ -107,7 +110,16 @@ namespace MCPForUnity.Editor.Helpers
                     // Capture before saving: the path is read back off the Scene struct, and
                     // anything that reopens or replaces the scene invalidates that handle.
                     string path = scene.path;
-                    EditorSceneManager.SaveScene(scene);
+                    if (!SaveScene(scene))
+                    {
+                        // The disk copy still differs, so refreshing now would raise the very prompt
+                        // this guard exists to prevent. Scenes saved before this one keep their new
+                        // baselines (sceneSaved records them); this one and any after stay unresolved.
+                        outcome.Blocked = true;
+                        outcome.Error = $"Could not save {path} to keep the Editor's version (is the file read-only or locked?). "
+                                        + "Make it writable and retry, or set on_external_scene_change to \"reload\".";
+                        return outcome;
+                    }
                     outcome.OverwrittenScenes.Add(path);
                 }
 
