@@ -21,6 +21,13 @@ namespace MCPForUnityTests.Editor.Helpers
     [TestFixture]
     public class SceneExternalChangeGuardTests
     {
+        // RefreshUnity.HandleCommand short-circuits with "tests_running" while a run the MCP bridge started
+        // (its run_tests tool) is in progress, so these command tests can't exercise their path there and
+        // are reported as ignored rather than passing vacuously. CI and the Test Runner window don't set
+        // TestRunStatus, so they run them for real.
+        private const string BridgeRunReason =
+            "Started through the MCP bridge's run_tests, where RefreshUnity answers tests_running; run from CI or the Test Runner window.";
+
         [TestCase(null, "auto")]
         [TestCase("", "auto")]
         [TestCase("  ", "auto")]
@@ -64,8 +71,7 @@ namespace MCPForUnityTests.Editor.Helpers
             var result = ToJObject(task.Result);
             if (TestRunStatus.IsRunning)
             {
-                Assert.AreEqual("tests_running", result["data"]?["reason"]?.ToString(), result.ToString());
-                return;
+                Assert.Ignore(BridgeRunReason);
             }
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
@@ -137,8 +143,7 @@ namespace MCPForUnityTests.Editor.Helpers
                 var result = ToJObject(task.Result);
                 if (TestRunStatus.IsRunning)
                 {
-                    Assert.AreEqual("tests_running", result["data"]?["reason"]?.ToString(), result.ToString());
-                    return;
+                    Assert.Ignore(BridgeRunReason);
                 }
 
                 Assert.IsTrue(result.Value<bool>("success"),
