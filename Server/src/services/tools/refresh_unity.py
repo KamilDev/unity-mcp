@@ -270,10 +270,20 @@ async def refresh_unity(
         pass
 
     if recovered_from_disconnect:
+        if ready_confirmed:
+            out = _report_ready({"success": True, "data": {"recovered_from_disconnect": True}}, waited_s)
+            out["message"] = "Refresh recovered after Unity disconnect/retry; editor is ready."
+            return MCPResponse(**out)
+        # Only reachable for a compile whose reload dropped the connection with wait_for_ready=false:
+        # nothing waited, so the editor is very likely still reloading.
         return MCPResponse(
             success=True,
-            message="Refresh recovered after Unity disconnect/retry; editor is ready.",
-            data={"recovered_from_disconnect": True},
+            message="Refresh triggered; Unity disconnected for the domain reload, as expected.",
+            data={
+                "recovered_from_disconnect": True,
+                "ready_confirmed": False,
+                "hint": "Poll the mcpforunity://editor/state resource until data.advice.ready_for_tools is true.",
+            },
         )
 
     if ready_confirmed:

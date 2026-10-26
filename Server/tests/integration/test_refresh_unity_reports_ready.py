@@ -17,16 +17,32 @@ UNITY_REPLY_AT_COMPILE_START = {
 }
 
 
-def _patch_transport(monkeypatch):
+def _patch_transport(monkeypatch, refresh_reply=UNITY_REPLY_AT_COMPILE_START):
     async def fake_send_with_unity_instance(send_fn, unity_instance, command_type, params, **kwargs):
         if command_type == "refresh_unity":
-            return UNITY_REPLY_AT_COMPILE_START
+            return refresh_reply
         if command_type == "get_editor_state":
             return {"success": True, "data": {"advice": {"ready_for_tools": True}}}
         raise ValueError(f"Unexpected command: {command_type}")
 
     import services.tools.refresh_unity as refresh_mod
     monkeypatch.setattr(refresh_mod.unity_transport, "send_with_unity_instance", fake_send_with_unity_instance)
+
+
+def _poll_not_ready_then_ready(monkeypatch, not_ready_polls=2):
+    """Run the real readiness poll (not the pytest short-circuit) against a compile that is still
+    going for the first polls. Returns a list that records each poll's answer."""
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    import services.tools.refresh_unity as refresh_mod
+    answers = []
+
+    async def fake_get_editor_state(ctx):
+        ready = len(answers) >= not_ready_polls
+        answers.append(ready)
+        return {"data": {"advice": {"ready_for_tools": ready, "blocking_reasons": [] if ready else ["compiling"]}}}
+
+    monkeypatch.setattr(refresh_mod.editor_state, "get_editor_state", fake_get_editor_state)
+    return answers
 
 
 @pytest.mark.asyncio
@@ -39,11 +55,15 @@ async def test_refresh_unity_reports_ready_after_waiting(monkeypatch):
     ctx = DummyContext()
     await ctx.set_state("unity_instance", "UnityMCPTests@cc8756d4cce0805a")
     _patch_transport(monkeypatch)
+    polls = _poll_not_ready_then_ready(monkeypatch)
 
     resp = await refresh_unity(ctx, compile="request", wait_for_ready=True)
     payload = resp.model_dump() if hasattr(resp, "model_dump") else resp
     data = payload["data"]
 
+    # it reported ready only after the poll saw the editor ready, not on the first answer
+    assert polls == [False, False, True]
+    assert data["waited_seconds"] > 0
     assert payload["success"] is True
     assert data["resulting_state"] == "idle"
     assert data["ready_confirmed"] is True
@@ -69,3 +89,52 @@ async def test_refresh_unity_without_wait_keeps_unity_reply(monkeypatch):
     assert payload["data"]["resulting_state"] == "compiling"
     assert "ready_confirmed" not in payload["data"]
     assert "poll" in payload["data"]["hint"]
+
+
+DISCONNECT_DURING_RELOAD = {"success": False, "error": "Connection closed before reading expected bytes"}
+
+
+@pytest.mark.asyncio
+async def test_refresh_unity_recovered_disconnect_reports_ready(monkeypatch):
+    """The reload can drop the connection before Unity's reply arrives; once the wait confirms
+    readiness, that recovery reply carries the same confirmed-ready fields as the normal one."""
+    from services.tools.refresh_unity import refresh_unity
+
+    ctx = DummyContext()
+    await ctx.set_state("unity_instance", "UnityMCPTests@cc8756d4cce0805a")
+    _patch_transport(monkeypatch, refresh_reply=DISCONNECT_DURING_RELOAD)
+    polls = _poll_not_ready_then_ready(monkeypatch)
+
+    resp = await refresh_unity(ctx, compile="request", wait_for_ready=True)
+    payload = resp.model_dump() if hasattr(resp, "model_dump") else resp
+    data = payload["data"]
+
+    assert polls == [False, False, True]
+    assert payload["success"] is True
+    assert data["recovered_from_disconnect"] is True
+    assert data["ready_confirmed"] is True
+    assert data["resulting_state"] == "idle"
+    assert data["waited_seconds"] > 0
+    assert "unity_state_at_reply" not in data   # Unity's reply never arrived
+    assert "editor is ready" in payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_unity_recovered_disconnect_without_wait_does_not_claim_ready(monkeypatch):
+    """With wait_for_ready=false nothing waited after the reload dropped the connection, so the
+    reply must not say the editor is ready (it used to)."""
+    from services.tools.refresh_unity import refresh_unity
+
+    ctx = DummyContext()
+    await ctx.set_state("unity_instance", "UnityMCPTests@cc8756d4cce0805a")
+    _patch_transport(monkeypatch, refresh_reply=DISCONNECT_DURING_RELOAD)
+
+    resp = await refresh_unity(ctx, compile="request", wait_for_ready=False)
+    payload = resp.model_dump() if hasattr(resp, "model_dump") else resp
+    data = payload["data"]
+
+    assert payload["success"] is True
+    assert data["recovered_from_disconnect"] is True
+    assert data["ready_confirmed"] is False
+    assert "ready" not in payload["message"].lower()
+    assert "poll" in data["hint"].lower()
